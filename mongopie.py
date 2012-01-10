@@ -129,7 +129,7 @@ class Field(object):
         return '_' + self.fieldname
 
 class BooleanField(Field):
-    def __init__(self, default=false, **kwargs):
+    def __init__(self, default=False, **kwargs):
         super(BooleanField, self).__init__(default=default,
                                            **kwargs)
 
