@@ -116,7 +116,7 @@ class Field(object):
                        self.default_value)
     
     def __set__(self, obj, value):
-        if value is not self.default_value:
+        if value is not None:
             setattr(obj, self.get_obj_key(), value)
 
     def __del__(self):
@@ -127,6 +127,15 @@ class Field(object):
 
     def get_obj_key(self):
         return '_' + self.fieldname
+
+class BooleanField(Field):
+    def __init__(self, default=false, **kwargs):
+        super(BooleanField, self).__init__(default=default,
+                                           **kwargs)
+
+    def __set__(self, obj, value):
+        value = not not value
+        super(BooleanField, self).__set__(obj, value)
 
 class IntegerField(Field):
     def __init__(self, default=0, **kwargs):
@@ -313,7 +322,11 @@ class Model(object):
 
     @classmethod
     def remove(cls, **conditions):
+        conditions = cls.filter_condition(conditions)        
         return cls.collection().remove(conditions)
+
+    def erase(self):
+        return cls.collection().remove(_id=self.id)
 
     @classmethod
     def get(cls, objid, **kw):
