@@ -64,7 +64,7 @@ class CursorWrapper:
         return self
 
     def __getitem__(self, index):
-        data = self.cursor.__getitem__(index)
+        datpa = self.cursor.__getitem__(index)
         if isinstance(data, Cursor):
             return CursorWrapper(self.cls, data)
         else:
@@ -143,7 +143,7 @@ class IntegerField(Field):
                                            **kwargs)
 
     def __set__(self, obj, value):
-        value = int(value)
+        value = long(value)
         super(IntegerField, self).__set__(obj, value)
 
 class StringField(Field):
@@ -273,7 +273,11 @@ class Model(object):
         col = cls.collection()
         for idx, kwargs in cls.index_list:
             col.ensure_index(idx, **kwargs)
-        
+    
+    @classmethod
+    def get_auto_incr_value(cls):
+        pass
+
     @classmethod
     def collection(cls):
         database = getattr(cls, '__database__', default_db)
@@ -384,3 +388,18 @@ class Model(object):
                 setattr(self,
                         field.fieldname,
                         kwargs[key])
+
+class SequenceModel(Model):
+    seq = IntegerField()
+    @classmethod
+    def get_next(cls, key):
+        col = cls.collection()
+        v = col.find_and_modify(query={'_id': key},
+                                update={'$inc': {'seq': 1}},
+                                upsert=True, new=True)
+        if v:
+            return v['seq']
+        return v
+
+        
+        
