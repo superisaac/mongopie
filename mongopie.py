@@ -64,7 +64,7 @@ class CursorWrapper:
         return self
 
     def __getitem__(self, index):
-        datpa = self.cursor.__getitem__(index)
+        data = self.cursor.__getitem__(index)
         if isinstance(data, Cursor):
             return CursorWrapper(self.cls, data)
         else:
