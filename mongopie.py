@@ -57,6 +57,9 @@ class CursorWrapper:
         self.cls = cls
         self.cursor = cursor
     
+    def __len__(self):
+        return self.cursor.count()
+    
     def __repr__(self):
         return repr(list(self))
 
