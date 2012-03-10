@@ -63,6 +63,17 @@ def make_sort(fields):
             cols.append((f, ASCENDING))
     return cols
 
+def make_sort_dict(fields):
+    cols = {}
+    if not fields:
+        return cols
+    for f in fields:
+        if f.startswith('-'):
+            cols[f[1:]] = -1
+        else:
+            cols[f] = 1
+    return cols
+
 class CursorWrapper:
     def __init__(self, cls, cursor):
         self.cls = cls
@@ -316,13 +327,14 @@ class Model(object):
         return newcondition
     
     @classmethod
-    def find_and_modify(cls, query, update=None, sort=None, upsert=False, new=True):
+    def find_and_modify(cls, query=None, update=None, sort=None, upsert=False, new=False):
         """
         Atomic find and modify
         """
         col = cls.collection()
         query = cls.filter_condition(query)
-        sort = make_sort(sort)
+        sort = make_sort_dict(sort)
+        update = cls.filter_condition(update)
         datadict = col.find_and_modify(query=query,
                                        update=update,
                                        sort=sort,
@@ -337,7 +349,7 @@ class Model(object):
         """
         col = cls.collection()
         query = cls.filter_condition(query)
-        sort = make_sort(sort)
+        sort = make_sort_dict(sort)
         datadict = col.find_and_modify(query=query,
                                        sort=sort,
                                        remove=True)
