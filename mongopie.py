@@ -233,6 +233,7 @@ class ReferenceField(ObjectIdField):
 
 class DateTimeField(Field):
     def __init__(self, default=None, **kwargs):
+        self.auto_now_add = kwargs.get('auto_now_add', False)
         self.auto_now = kwargs.get('auto_now', False)
         super(DateTimeField, self).__init__(default=default,
                                             **kwargs)
@@ -240,7 +241,10 @@ class DateTimeField(Field):
     def __get__(self, obj, type=None):
         val = super(DateTimeField, self).__get__(obj,
                                                  type=type)
-        if val is None and self.auto_now:
+        if self.auto_now:
+            val = datetime.now()
+            self.__set__(obj, val)
+        elif val is None and self.auto_now_add:
             val = datetime.now()
             self.__set__(obj, val)
         return val
