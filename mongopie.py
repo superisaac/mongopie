@@ -52,6 +52,17 @@ def get_server(host, port, db_name):
         _conn_pool[(host, port)] = conn
     return _conn_pool[(host, port)][db_name]
 
+def make_sort(fields):
+    cols = []
+    if not fields:
+        return cols
+    for f in fields:
+        if f.startswith('-'):
+            cols.append((f[1:], DESCENDING))
+        else:
+            cols.append((f, ASCENDING))
+    return cols
+
 class CursorWrapper:
     def __init__(self, cls, cursor):
         self.cls = cls
@@ -78,12 +89,7 @@ class CursorWrapper:
         return self.cursor.count(**kw)
 
     def sort(self, *fields):
-        cols = []
-        for f in fields:
-            if f.startswith('-'):
-                cols.append((f[1:], DESCENDING))
-            else:
-                cols.append((f, ASCENDING))
+        cols = make_sort(fields)
         r = self.cursor.sort(cols)
         return CursorWrapper(self.cls, r)
 
@@ -297,6 +303,8 @@ class Model(object):
     @classmethod
     def filter_condition(cls, conditions):
         newcondition = {}
+        if conditions is None:
+            conditions = {}
         for k, v in conditions.iteritems():
             if isinstance(v, Model):
                 v = v.id
@@ -306,6 +314,38 @@ class Model(object):
             else:
                 newcondition[k] = v
         return newcondition
+    
+    @classmethod
+    def find_and_modify(cls, query, update=None, sort=None, upsert=False, new=True):
+        """
+        Atomic find and modify
+        """
+        col = cls.collection()
+        query = cls.filter_condition(query)
+        sort = make_sort(sort)
+        datadict = col.find_and_modify(query=query,
+                                       update=update,
+                                       sort=sort,
+                                       upsert=upsert, new=new)
+        if datadict:
+            return cls.get_from_data(datadict)
+    
+    @classmethod
+    def find_and_remove(cls, query=None, sort=None):
+        """
+        Atomic way to dequeue an object
+        """
+        col = cls.collection()
+        query = cls.filter_condition(query)
+        sort = make_sort(sort)
+        datadict = col.find_and_modify(query=query,
+                                       sort=sort,
+                                       remove=True)
+        if datadict:
+            return cls.get_from_data(datadict)
+    
+    
+
 
     @classmethod
     def find(cls, **conditions):
@@ -403,6 +443,4 @@ class SequenceModel(Model):
         if v:
             return v['seq']
         return v
-
-        
         
