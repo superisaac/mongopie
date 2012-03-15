@@ -166,6 +166,11 @@ class IntegerField(Field):
         value = long(value)
         super(IntegerField, self).__set__(obj, value)
 
+class SequenceField(IntegerField):
+    def __init__(self, key, default=0, **kwargs):
+        self.key = key
+        super(SequenceField, self).__init__(default=default, **kwargs)
+
 class StringField(Field):
     pass
 
@@ -416,6 +421,11 @@ class Model(object):
     def save(self):
         new = self.id is None
         col = self.collection()
+        if new:
+            for field in self.fields:
+                if (isinstance(field, SequenceField) and 
+                    not getattr(self, field.fieldname, None)):
+                    setattr(self, field.fieldname, SequenceModel.get_next(field.key))
         self.id = col.save(self.get_dict())
         if new:
             self.on_created()
