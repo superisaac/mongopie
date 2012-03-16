@@ -376,7 +376,7 @@ class Model(object):
         """
         col = cls.collection()
         query = cls.filter_condition(query)
-        sort = make_sort_dict(sort)
+        sort = cls.make_sort_dict(sort)
         datadict = col.find_and_modify(query=query,
                                        sort=sort,
                                        remove=True)
