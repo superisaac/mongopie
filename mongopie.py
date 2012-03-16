@@ -52,27 +52,6 @@ def get_server(host, port, db_name):
         _conn_pool[(host, port)] = conn
     return _conn_pool[(host, port)][db_name]
 
-def make_sort(fields):
-    cols = []
-    if not fields:
-        return cols
-    for f in fields:
-        if f.startswith('-'):
-            cols.append((f[1:], DESCENDING))
-        else:
-            cols.append((f, ASCENDING))
-    return cols
-
-def make_sort_dict(fields):
-    cols = {}
-    if not fields:
-        return cols
-    for f in fields:
-        if f.startswith('-'):
-            cols[f[1:]] = -1
-        else:
-            cols[f] = 1
-    return cols
 
 class CursorWrapper:
     def __init__(self, cls, cursor):
@@ -100,7 +79,7 @@ class CursorWrapper:
         return self.cursor.count(**kw)
 
     def sort(self, *fields):
-        cols = make_sort(fields)
+        cols = self.cls.make_sort(fields)
         r = self.cursor.sort(cols)
         return CursorWrapper(self.cls, r)
 
@@ -320,6 +299,45 @@ class Model(object):
         model_obj.save()
         return model_obj
 
+    def get_addtime(self):
+        if isinstance(self.id, ObjectId):
+            return self.id.generation_time
+
+    @classmethod
+    def make_sort(cls, fields):
+        cols = []
+        if not fields:
+            return cols
+        for f in fields:
+            if f.startswith('-'):
+                order =  DESCENDING
+                f = f[1:]
+                cols.append((f[1:], DESCENDING))
+            else:
+                order = ASCENDING
+            
+            if f in cls.field_map:
+                f = cls.field_map[f].get_key()
+            cols.append((f, order))
+        return cols
+
+    @classmethod
+    def make_sort_dict(cls, fields):
+        cols = {}
+        if not fields:
+            return cols
+        for f in fields:
+            if f.startswith('-'):
+                f = f[1:]
+                order = -1
+            else:
+                order = 1
+
+            if f in cls.field_map:
+                f = cls.field_map[f].get_key()
+            cols[f] = 1
+        return cols
+
     @classmethod
     def filter_condition(cls, conditions):
         newcondition = {}
@@ -342,7 +360,7 @@ class Model(object):
         """
         col = cls.collection()
         query = cls.filter_condition(query)
-        sort = make_sort_dict(sort)
+        sort = cls.make_sort_dict(sort)
         update = cls.filter_condition(update)
         datadict = col.find_and_modify(query=query,
                                        update=update,
