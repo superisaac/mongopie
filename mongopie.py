@@ -257,6 +257,12 @@ class Model(object):
     __metaclass__ = ModelMeta
     index_list = []
 
+    def __str__(self):
+        """
+        Only use unicode method
+        """
+        return unicode(self)
+
     @classmethod
     def initialize(cls):
         """ Initialize the necessary stuffs of a model class
