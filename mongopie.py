@@ -374,7 +374,15 @@ class Model(object):
                                        upsert=upsert, new=new)
         if datadict:
             return cls.get_from_data(datadict)
-    
+
+    @classmethod
+    def increment_field(cls, field, value=1, **query):
+        return cls.find_and_modify(
+            query=query,
+            update={
+                '$inc': {field: value}
+                })
+
     @classmethod
     def find_and_remove(cls, query=None, sort=None):
         """
