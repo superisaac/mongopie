@@ -43,7 +43,7 @@ def test():
     make_vote('Tom', 'Jack', 'Hacking')
     make_vote('Jerry', 'Jack', 'Food')
     make_vote('Jerry', 'Jack', 'Hacking')
-    for ut in UserTag.find(user='Jack').sort('tag').find(tag='Hacking'):
+    for ut in UserTag.find(user='Jack').sort('tag').find(tag='Hacking')[0:1]:
         print ut.get_dict()
 
 if __name__ == '__main__':

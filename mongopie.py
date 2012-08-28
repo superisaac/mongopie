@@ -54,7 +54,8 @@ def get_server(host, port, db_name):
 
 
 class CursorWrapper:
-    def __init__(self, cls, conditions=None, orders=None):
+    slice = None
+    def __init__(self, cls, conditions=None, orders=None, slice=None):
         if conditions:
             self.conditions = conditions
         else:
@@ -64,6 +65,9 @@ class CursorWrapper:
             self.orders = orders
         else:
             self.orders = []
+
+        if self.slice:
+            self.slice = slice
         self.cls = cls
 
     def get_cursor(self):
@@ -71,6 +75,8 @@ class CursorWrapper:
         cursor = col.find(self.conditions)
         if self.orders:
             cursor = cursor.sort(self.orders)
+        if self.slice:
+            cursor = cursor.__getitem__(self.slice)
         return cursor
 
     def __len__(self):
@@ -87,10 +93,14 @@ class CursorWrapper:
         return iter(cursor_iter())
 
     def __getitem__(self, index):
-        data = self.get_cursor().__getitem__(index)
-        if isinstance(data, Cursor):
-            return CursorWrapper(self.cls, data)
+        if isinstance(index, slice):
+            return CursorWrapper(self.cls,
+                                 conditions=self.conditions,
+                                 orders=self.orders,
+                                 slice=index)
         else:
+            assert isinstance(index, (int, long))
+            data = self.get_cursor().__getitem__(index)
             assert isinstance(data, dict)
             return self.cls.get_from_data(data)
 
@@ -281,7 +291,9 @@ class Model(object):
         """
         Only use unicode method
         """
-        return unicode(self)
+        if hasattr(self, '__unicode__'):
+            return self.__unicode__()
+        return super(Model, self).__str__()
 
     @classmethod
     def initialize(cls):
