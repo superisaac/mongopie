@@ -54,21 +54,40 @@ def get_server(host, port, db_name):
 
 
 class CursorWrapper:
-    def __init__(self, cls, cursor):
+    def __init__(self, cls, conditions=None, orders=None):
+        if conditions:
+            self.conditions = conditions
+        else:
+            self.conditions = {}
+        
+        if orders:
+            self.orders = orders
+        else:
+            self.orders = []
         self.cls = cls
-        self.cursor = cursor
-    
+
+    def get_cursor(self):
+        col = self.cls.collection()
+        cursor = col.find(self.conditions)
+        if self.orders:
+            cursor = cursor.sort(self.orders)
+        return cursor
+
     def __len__(self):
-        return self.cursor.count()
+        return self.get_cursor().count()
     
     def __repr__(self):
         return repr(list(self))
 
     def __iter__(self):
-        return self
+        def cursor_iter():
+            cursor = self.get_cursor()
+            for datadict in cursor:
+                yield self.cls.get_from_data(datadict)
+        return iter(cursor_iter())
 
     def __getitem__(self, index):
-        data = self.cursor.__getitem__(index)
+        data = self.get_cursor().__getitem__(index)
         if isinstance(data, Cursor):
             return CursorWrapper(self.cls, data)
         else:
@@ -80,17 +99,18 @@ class CursorWrapper:
 
     def sort(self, *fields):
         cols = self.cls.make_sort(fields)
-        r = self.cursor.sort(cols)
-        return CursorWrapper(self.cls, r)
+        return CursorWrapper(self.cls,
+                             conditions=self.conditions,
+                             orders=self.orders + cols
+                             )
 
     def find(self, **kwargs):
         kwargs = self.cls.filter_condition(kwargs)
-        r = self.cursor.find(kwargs)
-        return CursorWrapper(self.cls, r)
-
-    def next(self):
-        datadict = self.cursor.next()
-        return self.cls.get_from_data(datadict)
+        conditions = self.conditions.copy()
+        conditions.update(kwargs)
+        return CursorWrapper(self.cls, 
+                             conditions=conditions,
+                             orders=self.orders)
 
 class Field(object):
     """ Field that defines the schema of a DB
@@ -403,8 +423,7 @@ class Model(object):
     @classmethod
     def find(cls, **conditions):
         conditions = cls.filter_condition(conditions)
-        col = cls.collection()
-        return CursorWrapper(cls, col.find(conditions))
+        return CursorWrapper(cls, conditions=conditions)
 
     @classmethod
     def find_one(cls, **conditions):
