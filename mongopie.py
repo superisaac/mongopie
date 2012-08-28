@@ -457,7 +457,7 @@ class Model(object):
         return cls.collection().remove(conditions)
 
     def erase(self):
-        return cls.collection().remove(_id=self.id)
+        return self.remove(_id=self.id)
 
     @classmethod
     def get(cls, objid, **kw):
@@ -532,4 +532,3 @@ class SequenceModel(Model):
         if v:
             return v['seq']
         return v
-        
