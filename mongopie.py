@@ -54,8 +54,8 @@ def get_server(host, port, db_name):
 
 
 class CursorWrapper:
-    slice = None
-    def __init__(self, cls, conditions=None, orders=None, slice=None):
+    index=None
+    def __init__(self, cls, conditions=None, orders=None, index=None):
         if conditions:
             self.conditions = conditions
         else:
@@ -66,8 +66,8 @@ class CursorWrapper:
         else:
             self.orders = []
 
-        if slice:
-            self.slice = slice
+        if index:
+            self.index = index
         self.cls = cls
 
     def get_cursor(self):
@@ -75,8 +75,8 @@ class CursorWrapper:
         cursor = col.find(self.conditions)
         if self.orders:
             cursor = cursor.sort(self.orders)
-        if self.slice:
-            cursor = cursor.__getitem__(self.slice)
+        if self.index:
+            cursor = cursor.__getitem__(self.index)
         return cursor
 
     def __len__(self):
@@ -94,10 +94,11 @@ class CursorWrapper:
 
     def __getitem__(self, index):
         if isinstance(index, slice):
-            return CursorWrapper(self.cls,
-                                 conditions=self.conditions,
-                                 orders=self.orders,
-                                 slice=index)
+            return CursorWrapper(
+                self.cls,
+                conditions=self.conditions,
+                orders=self.orders,
+                index=index)
         else:
             assert isinstance(index, (int, long))
             data = self.get_cursor().__getitem__(index)
