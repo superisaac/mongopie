@@ -66,7 +66,7 @@ class CursorWrapper:
         else:
             self.orders = []
 
-        if self.slice:
+        if slice:
             self.slice = slice
         self.cls = cls
 
