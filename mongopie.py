@@ -105,8 +105,8 @@ class CursorWrapper:
             assert isinstance(data, dict)
             return self.cls.get_from_data(data)
 
-    def count(self, **kw):
-        return self.cursor.count(**kw)
+    def count(self):
+        return self.get_cursor().count()
 
     def sort(self, *fields):
         cols = self.cls.make_sort(fields)
@@ -209,6 +209,7 @@ class ObjectIdField(Field):
         if v is None:
             return None
         elif isinstance(v, basestring):
+            # TODO: handle invalidid exception
             return ObjectId(v)
         else:
             assert isinstance(v, ObjectId)
