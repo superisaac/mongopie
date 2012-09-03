@@ -92,6 +92,12 @@ class CursorWrapper:
                 yield self.cls.get_from_data(datadict)
         return iter(cursor_iter())
 
+    def paginate(self, page=1, count=20):
+        if page < 1:
+            page = 1
+        index = slice((page - 1) * count, page * count)
+        return self.__getitem__(index)
+
     def __getitem__(self, index):
         if isinstance(index, slice):
             return CursorWrapper(
