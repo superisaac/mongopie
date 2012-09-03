@@ -35,6 +35,38 @@ from datetime import datetime
 from pymongo import Connection, ASCENDING, DESCENDING
 from pymongo.cursor import Cursor
 from bson.objectid import ObjectId
+from collections import defaultdict
+
+# Simple signal hub
+class SignalSlot(object):
+    def __init__(self):
+        self.clear()
+    
+    def connect(self, sender, handler):
+        handlers = self.handlers[sender]
+        handlers.append(handler)
+        return len(handlers) - 1
+
+    def disconnect(self, sender, index):
+        self.handlers[sender][index] = None
+        
+    def send(self, sender, **kw):
+        handlers = self.handlers[sender]
+        for handler in handlers:
+            if handler:
+                handler(sender, **kw)
+
+    def clear(self):
+        self.handlers = defaultdict(list)
+
+class ModelSignal():
+    def __init__(self):
+        self.pre_update = SignalSlot()
+        self.post_update = SignalSlot()
+        self.pre_create = SignalSlot()
+        self.post_create = SignalSlot()
+
+modelsignal = ModelSignal()
 
 def force_string_keys(datadict):
     return dict((k.encode('utf-8'), v)
@@ -492,14 +524,24 @@ class Model(object):
     def save(self):
         new = self.id is None
         col = self.collection()
+
         if new:
+            modelsignal.pre_create.send(self.__class__,
+                                   instance=self)
             for field in self.fields:
                 if (isinstance(field, SequenceField) and 
                     not getattr(self, field.fieldname, None)):
                     setattr(self, field.fieldname, SequenceModel.get_next(field.key))
+        else:
+            modelsignal.pre_update.send(self.__class__, instance=self)            
         self.id = col.save(self.get_dict())
         if new:
             self.on_created()
+            modelsignal.post_create.send(self.__class__,
+                                    instance=self)
+        else:
+            modelsignal.post_update.send(self.__class__,
+                                    instance=self)
     
     def on_created(self):
         pass
