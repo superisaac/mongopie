@@ -506,7 +506,7 @@ class Model(object):
             key = field.get_key()
             value = field.get_raw(self)
 
-            if value is not field.default_value:
+            if value is not None:
                 info_dict[key] = value
         return info_dict
 
