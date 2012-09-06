@@ -1,3 +1,5 @@
+################################################
+#
 # mongopie.py  - Object-Mongodb mapping
 #
 # LICENSE
@@ -30,27 +32,34 @@
 # Author: Zeng Ke
 # Email: superisaac.ke@gmail.com
 #
+################################################
 
 from datetime import datetime
 from pymongo import Connection, ASCENDING, DESCENDING
 from pymongo.cursor import Cursor
-from bson.objectid import ObjectId
+from bson.objectid import ObjectId, InvalidId
 from collections import defaultdict
 
 # Simple signal hub
 class SignalSlot(object):
     def __init__(self):
         self.clear()
-    
+
     def connect(self, sender, handler):
+        if sender is None:
+            sender = 'root'
         handlers = self.handlers[sender]
         handlers.append(handler)
         return len(handlers) - 1
 
     def disconnect(self, sender, index):
+        if sender is None:
+            sender = 'root'
         self.handlers[sender][index] = None
-        
+
     def send(self, sender, **kw):
+        if sender is None:
+            sender = 'root'
         handlers = self.handlers[sender]
         for handler in handlers:
             if handler:
@@ -92,7 +101,7 @@ class CursorWrapper:
             self.conditions = conditions
         else:
             self.conditions = {}
-        
+
         if orders:
             self.orders = orders
         else:
@@ -109,11 +118,15 @@ class CursorWrapper:
             cursor = cursor.sort(self.orders)
         if self.index:
             cursor = cursor.__getitem__(self.index)
+
         return cursor
 
     def __len__(self):
         return self.get_cursor().count()
-    
+
+    def __nonzero__(self):
+        return self.get_cursor().count() > 0
+
     def __repr__(self):
         return repr(list(self))
 
@@ -157,14 +170,14 @@ class CursorWrapper:
         kwargs = self.cls.filter_condition(kwargs)
         conditions = self.conditions.copy()
         conditions.update(kwargs)
-        return CursorWrapper(self.cls, 
+        return CursorWrapper(self.cls,
                              conditions=conditions,
                              orders=self.orders)
 
 class Field(object):
     """ Field that defines the schema of a DB
     Much like the field of relation db ORMs
-    A proxy of a object's attribute 
+    A proxy of a object's attribute
     """
     def __init__(self, default=None, **args):
         self._fieldname = None
@@ -182,14 +195,14 @@ class Field(object):
     def __get__(self, obj, type=None):
         return getattr(obj, self.get_obj_key(),
                        self.default_value)
-    
+
     def __set__(self, obj, value):
         if value is not None:
             setattr(obj, self.get_obj_key(), value)
 
     def __del__(self):
         pass
-    
+
     def get_key(self):
         return self.fieldname
 
@@ -252,7 +265,7 @@ class ObjectIdField(Field):
         else:
             assert isinstance(v, ObjectId)
             return v
-        
+
     def __init__(self, default=None, **kwargs):
         super(ObjectIdField, self).__init__(default=default,
                                            **kwargs)
@@ -273,15 +286,20 @@ class ReferenceField(ObjectIdField):
     def get_raw(self, obj):
         return super(ReferenceField, self).__get__(obj)
 
+    def get_ref_class(self, obj):
+        return self.ref_cls == 'self' and obj.__class__ or self.ref_cls
+
     def __get__(self, obj, type=None):
         objid = super(ReferenceField, self).__get__(obj, type=type)
         if objid is self.default_value:
             return self.default_value
-        val = self.ref_cls.get(objid)
+        ref_cls = self.get_ref_class(obj)
+        val = ref_cls.get(objid)
         return val
-    
+
     def __set__(self, obj, value):
-        if isinstance(value, self.ref_cls):
+        ref_cls = self.get_ref_class(obj)
+        if isinstance(value, ref_cls):
             value = ObjectId(value.id)
         super(ReferenceField, self).__set__(obj, value)
 
@@ -308,6 +326,12 @@ class DateTimeField(Field):
             assert isinstance(value, datetime)
         super(DateTimeField, self).__set__(obj, value)
 
+cache_classes = set()
+def clear_obj_cache():
+    for cls in cache_classes:
+        if cls.use_obj_cache:
+            cls.obj_cache = {}
+
 class ModelMeta(type):
     """ The meta class of Model
     Do some registering of Model classes
@@ -326,6 +350,7 @@ class Model(object):
     """
     __metaclass__ = ModelMeta
     index_list = []
+    use_obj_cache = True
 
     def __str__(self):
         """
@@ -342,6 +367,10 @@ class Model(object):
             * Touch db if not exist.
         Called in ModelMeta's __new__
         """
+        if cls.use_obj_cache:
+            cls.obj_cache = {}
+        cache_classes.add(cls)
+
         cls.col_name = cls.__name__.lower()
         idfield = ObjectIdField()
         cls.id = idfield
@@ -359,7 +388,7 @@ class Model(object):
         col = cls.collection()
         for idx, kwargs in cls.index_list:
             col.ensure_index(idx, **kwargs)
-    
+
     @classmethod
     def get_auto_incr_value(cls):
         pass
@@ -369,7 +398,7 @@ class Model(object):
         database = getattr(cls, '__database__', default_db)
         server = get_server(*database)
         return server[cls.col_name]
-    
+
     def create(cls, **kwargs):
         """ Create a new object
         """
@@ -390,10 +419,9 @@ class Model(object):
             if f.startswith('-'):
                 order =  DESCENDING
                 f = f[1:]
-                cols.append((f[1:], DESCENDING))
             else:
                 order = ASCENDING
-            
+
             if f in cls.field_map:
                 f = cls.field_map[f].get_key()
             cols.append((f, order))
@@ -430,12 +458,14 @@ class Model(object):
             else:
                 newcondition[k] = v
         return newcondition
-    
+
     @classmethod
     def find_and_modify(cls, query=None, update=None, sort=None, upsert=False, new=False):
         """
         Atomic find and modify
         """
+        if cls.use_obj_cache:
+            cls.obj_cache = {}
         col = cls.collection()
         query = cls.filter_condition(query)
         sort = cls.make_sort_dict(sort)
@@ -460,6 +490,8 @@ class Model(object):
         """
         Atomic way to dequeue an object
         """
+        if cls.use_obj_cache:
+            cls.obj_cache = {}
         col = cls.collection()
         query = cls.filter_condition(query)
         sort = cls.make_sort_dict(sort)
@@ -468,9 +500,6 @@ class Model(object):
                                        remove=True)
         if datadict:
             return cls.get_from_data(datadict)
-    
-    
-
 
     @classmethod
     def find(cls, **conditions):
@@ -486,38 +515,69 @@ class Model(object):
             return cls.get_from_data(datadict)
         else:
             return datadict
-            
+
     @classmethod
     def count(cls):
         return cls.collection().count()
 
     @classmethod
     def remove(cls, **conditions):
-        conditions = cls.filter_condition(conditions)        
+        if cls.use_obj_cache:
+            cls.obj_cache = {}
+        conditions = cls.filter_condition(conditions)
         return cls.collection().remove(conditions)
 
     def erase(self):
-        return self.remove(_id=self.id)
+        if self.use_obj_cache:
+            self.__class__.obj_cache.pop(self._id, None)
+        return self.collection().remove({'_id': self._id})
 
     @classmethod
-    def get(cls, objid, **kw):
+    def multi_get(cls, objid_list):
+        """ Get multiple objects in batch mode to reduce the time
+        spent on network traffic
+        """
+        obj_dict = {}
+        for obj in cls.find(_id={'$in': objid_list}):
+            obj_dict[obj._id] = obj
+            if cls.use_obj_cache:
+                cls.obj_cache[obj._id] = obj
+
+        for objid in objid_list:
+            yield obj_dict.get(objid)
+
+    @classmethod
+    def get(cls, objid):
+        """ Get an object by objectid
+        """
         if objid is None:
             return None
         if isinstance(objid, basestring):
-            objid = ObjectId(objid)
+            try:
+                objid = ObjectId(objid)
+            except InvalidId:
+                return None
         assert isinstance(objid, ObjectId);
+
+        if cls.use_obj_cache:
+            obj =  cls.obj_cache.get(objid)
+            if obj:
+                return obj
+
         col = cls.collection()
-        kw.update({'_id': objid})        
+        kw = {'_id': objid}
         datadict = col.find_one(kw)
         if datadict is not None:
             obj = cls(**force_string_keys(datadict))
+            if cls.use_obj_cache:
+                cls.obj_cache[objid] = obj
             return obj
 
     def __eq__(self, other):
         return (self.__class__ == other.__class__ and
                 self.id and other.id and
                 self.id == other.id)
-    
+
     def __hash__(self):
         return hash(self.id)
 
@@ -529,11 +589,13 @@ class Model(object):
             modelsignal.pre_create.send(self.__class__,
                                    instance=self)
             for field in self.fields:
-                if (isinstance(field, SequenceField) and 
+                if (isinstance(field, SequenceField) and
                     not getattr(self, field.fieldname, None)):
                     setattr(self, field.fieldname, SequenceModel.get_next(field.key))
         else:
-            modelsignal.pre_update.send(self.__class__, instance=self)            
+            modelsignal.pre_update.send(self.__class__, instance=self)
+            if self.use_obj_cache:
+                self.__class__.obj_cache.pop(self.id, None)
         self.id = col.save(self.get_dict())
         if new:
             self.on_created()
@@ -542,10 +604,10 @@ class Model(object):
         else:
             modelsignal.post_update.send(self.__class__,
                                     instance=self)
-    
+
     def on_created(self):
         pass
-    
+
     def get_dict(self):
         """ Get the dict representation of an object's fields
         """
