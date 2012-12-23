@@ -34,11 +34,19 @@
 #
 ################################################
 
+import os
+from urlparse import urlparse
 from datetime import datetime
 from pymongo import Connection, ASCENDING, DESCENDING
 from pymongo.cursor import Cursor
+from gridfs import GridFS
 from bson.objectid import ObjectId, InvalidId
 from collections import defaultdict
+
+import pytz
+
+def utc_now():
+    return datetime.utcnow().replace(tzinfo=pytz.utc)
 
 # Simple signal hub
 class SignalSlot(object):
@@ -74,14 +82,38 @@ class ModelSignal():
         self.post_update = SignalSlot()
         self.pre_create = SignalSlot()
         self.post_create = SignalSlot()
+        self.recycled = SignalSlot()
+        self.revived = SignalSlot()
+        self.will_erase = SignalSlot()
 
 modelsignal = ModelSignal()
 
-def force_string_keys(datadict):
-    return dict((k.encode('utf-8'), v)
+def merge_condition_dicts(dict1, dict2):
+    for k, v2 in dict2.iteritems():
+        v1 = dict1.get(k)
+        if isinstance(v1, dict) and isinstance(v2, dict):
+            # Merge 2 complicated conditions
+            v1.update(v2)
+            dict1[k] = v1
+        else:
+            dict1[k] = v2
+
+def force_string_keys(datadict, encoding='utf-8'):
+    return dict((k.encode(encoding), v)
                 for k, v in datadict.iteritems())
 
 default_db = ('localhost', 27017, 'modeltest')
+dbconn = os.getenv('MONGODB_CONNECTION')
+if dbconn:
+    # We accept url like mongo://127.0.0.1:27017/modeltest' or
+    # 'tcp://127.0.0.1:27017/modeltest'
+    parsed = urlparse(dbconn)
+    if parsed.scheme in ('tcp', 'mongo'):
+        host, port = parsed.netloc.split(':')
+        dbname = parsed.path[1:]
+        port = int(port)
+        default_db = (host, port, dbname)
+        
 def set_defaultdb(host, port, name):
     global default_db
     default_db = (host, port, name)
@@ -89,7 +121,7 @@ def set_defaultdb(host, port, name):
 _conn_pool = {}
 def get_server(host, port, db_name):
     if (host, port) not in _conn_pool:
-        conn = Connection(host, port)
+        conn = Connection(host, port, tz_aware=True)
         _conn_pool[(host, port)] = conn
     return _conn_pool[(host, port)][db_name]
 
@@ -169,7 +201,7 @@ class CursorWrapper:
     def find(self, **kwargs):
         kwargs = self.cls.filter_condition(kwargs)
         conditions = self.conditions.copy()
-        conditions.update(kwargs)
+        merge_condition_dicts(conditions, kwargs)
         return CursorWrapper(self.cls,
                              conditions=conditions,
                              orders=self.orders)
@@ -193,8 +225,9 @@ class Field(object):
         return self.__get__(obj)
 
     def __get__(self, obj, type=None):
-        return getattr(obj, self.get_obj_key(),
-                       self.default_value)
+        v =  getattr(obj, self.get_obj_key(),
+                     self.default_value)
+        return v
 
     def __set__(self, obj, value):
         if value is not None:
@@ -227,13 +260,29 @@ class IntegerField(Field):
         value = long(value)
         super(IntegerField, self).__set__(obj, value)
 
+class FloatField(Field):
+    def __init__(self, default=0, **kwargs):
+        super(FloatField, self).__init__(default=default,
+                                           **kwargs)
+
+    def __set__(self, obj, value):
+        value = float(value)
+        super(FloatField, self).__set__(obj, value)
+
 class SequenceField(IntegerField):
     def __init__(self, key, default=0, **kwargs):
         self.key = key
         super(SequenceField, self).__init__(default=default, **kwargs)
 
 class StringField(Field):
-    pass
+    def __set__(self, obj, value):
+        if isinstance(value, unicode):
+            pass
+        elif isinstance(value, basestring):
+            value = unicode(value, 'utf-8')
+        else:
+            value = unicode(value)
+        super(StringField, self).__set__(obj, value)
 
 class CollectionField(Field):
     def __get__(self, obj, type=None):
@@ -249,6 +298,27 @@ class CollectionField(Field):
 class ArrayField(CollectionField):
     def get_default_value(self):
         return []
+
+class ChildrenField(ArrayField):
+    def __init__(self, child_cls, **kw):
+        super(ChildrenField, self).__init__(**kw)
+        self.child_cls = child_cls
+
+    def get_child_class(self, obj):
+        return self.child_cls
+
+    def __get__(self, obj, type=None):
+        arr = super(ChildrenField, self).__get__(obj, type=type)
+        objarr = [self.child_cls(**v) for v in arr]
+        return objarr
+
+    def __set__(self, obj, arr):
+        value = []
+        for v in arr:
+            if isinstance(v, Model):
+                v = v.get_dict()
+            value.append(v)
+        super(ChildrenField, self).__set__(obj, value)
 
 class DictField(CollectionField):
     def get_default_value(self):
@@ -276,6 +346,42 @@ class ObjectIdField(Field):
 
     def get_key(self):
         return '_' + self.fieldname
+
+class FileField(ObjectIdField):
+    def get_obj_key(self):
+        return '_' + self.fieldname
+
+    @staticmethod
+    def get_fs(obj):
+        cls = obj.__class__
+        database = getattr(cls, '__database__', default_db)
+        server = get_server(*database)
+        return GridFS(server)
+
+    def __get__(self, obj, type=None):
+        objid = super(FileField, self).__get__(obj, type=type)
+        if not objid:
+            return None
+        fs = self.get_fs(obj)
+        f = fs.get(objid)
+        return f
+
+    def get_raw(self, obj):
+        v =  getattr(obj, self.get_obj_key(),
+                     self.default_value)
+        return v
+
+    def __set__(self, obj, value):
+        fs = self.get_fs(obj)
+        old_f = self.__get__(obj, type=None)
+        if old_f:
+            fs.delete(old_f._id)
+        if isinstance(value, basestring):
+            f = fs.new_file()
+            f.write(value)
+            f.close()
+            value = f
+        super(FileField, self).__set__(obj, value._id)
 
 class ReferenceField(ObjectIdField):
     def __init__(self, ref_cls, default=None, **kwargs):
@@ -313,12 +419,10 @@ class DateTimeField(Field):
     def __get__(self, obj, type=None):
         val = super(DateTimeField, self).__get__(obj,
                                                  type=type)
-        if self.auto_now:
-            val = datetime.now()
-            self.__set__(obj, val)
-        elif val is None and self.auto_now_add:
-            val = datetime.now()
-            self.__set__(obj, val)
+        if val is None:
+            if self.auto_now and self.auto_now_add:
+                val = utc_now()
+                self.__set__(obj, val)
         return val
 
     def __set__(self, obj, value):
@@ -399,6 +503,12 @@ class Model(object):
         server = get_server(*database)
         return server[cls.col_name]
 
+    @classmethod
+    def recycle_collection(cls):
+        database = getattr(cls, '__database__', default_db)
+        server = get_server(*database)
+        return server['%s_recycle' % cls.col_name]
+
     def create(cls, **kwargs):
         """ Create a new object
         """
@@ -441,7 +551,7 @@ class Model(object):
 
             if f in cls.field_map:
                 f = cls.field_map[f].get_key()
-            cols[f] = 1
+            cols[f] = order
         return cols
 
     @classmethod
@@ -454,9 +564,8 @@ class Model(object):
                 v = v.id
             if k in cls.field_map:
                 field = cls.field_map[k]
-                newcondition[field.get_key()] = v
-            else:
-                newcondition[k] = v
+                k = field.get_key()
+            newcondition[k] = v
         return newcondition
 
     @classmethod
@@ -530,10 +639,33 @@ class Model(object):
     def erase(self):
         if self.use_obj_cache:
             self.__class__.obj_cache.pop(self._id, None)
+        modelsignal.will_erase.send(self.__class__,
+                                    instance=self)
         return self.collection().remove({'_id': self._id})
 
+    def recycle(self):
+        col = self.recycle_collection()
+        objid = col.save(self.get_dict())
+        assert objid == self._id
+        modelsignal.recycled.send(self.__class__,
+                                  instance=self)
+        self.erase()
+        return objid        
+
     @classmethod
-    def multi_get(cls, objid_list):
+    def revive(cls, objid):
+        rcol = cls.recycle_collection()
+        obj = rcol.find_one({'_id': objid})
+        if obj:
+            col = cls.collection()
+            col.save(obj)
+            obj = cls.get(objid)
+            modelsignal.revived.send(cls,
+                                     instance=obj)
+            return obj
+
+    @classmethod
+    def multi_get(cls, objid_list, exclude_null=True):
         """ Get multiple objects in batch mode to reduce the time
         spent on network traffic
         """
@@ -544,7 +676,9 @@ class Model(object):
                 cls.obj_cache[obj._id] = obj
 
         for objid in objid_list:
-            yield obj_dict.get(objid)
+            obj = obj_dict.get(objid)
+            if obj or not exclude_null:
+                yield obj
 
     @classmethod
     def get(cls, objid):
@@ -582,16 +716,32 @@ class Model(object):
         return hash(self.id)
 
     def save(self):
+        """
+        You should be very cautious if you have setup signal handlers, and try
+        to call Model.save in the signal handler, you will probably produce a
+        Model.save recursion.
+        E.g. setup a pre_update signal handler for User, in that handler you
+        try to call User.save directly or code some where.
+        Think it over.
+        """
         new = self.id is None
         col = self.collection()
 
-        if new:
-            modelsignal.pre_create.send(self.__class__,
-                                   instance=self)
-            for field in self.fields:
+        for field in self.fields:
+            if new:
                 if (isinstance(field, SequenceField) and
                     not getattr(self, field.fieldname, None)):
                     setattr(self, field.fieldname, SequenceModel.get_next(field.key))
+            if isinstance(field, DateTimeField):
+                if field.auto_now:
+                    setattr(self, field.fieldname, utc_now())
+                elif (field.auto_now_add
+                      and new
+                      and not getattr(self, field.fieldname, None)):
+                    setattr(self, field.fieldname, utc_now())
+        if new:
+            modelsignal.pre_create.send(self.__class__,
+                                   instance=self)
         else:
             modelsignal.pre_update.send(self.__class__, instance=self)
             if self.use_obj_cache:
@@ -626,12 +776,8 @@ class Model(object):
         return cls(**datadict)
 
     def __init__(self, **kwargs):
-        for field in self.fields:
-            key = field.get_key()
-            if key in kwargs:
-                setattr(self,
-                        field.fieldname,
-                        kwargs[key])
+        for key, value in kwargs.iteritems():
+            setattr(self, key, value)
 
 class SequenceModel(Model):
     seq = IntegerField()
