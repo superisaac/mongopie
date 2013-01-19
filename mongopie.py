@@ -440,8 +440,17 @@ class ModelMeta(type):
     """ The meta class of Model
     Do some registering of Model classes
     """
+    __clsdicts__ = {}
     def __new__(meta, clsname, bases, classdict):
-        cls = type.__new__(meta, clsname, bases, classdict)
+        allclassdict = {}
+        for basecls in bases:
+            baseclsname = basecls.__name__
+            if baseclsname != 'Model':
+                allclassdict.update(
+                    meta.__clsdicts__.get(baseclsname, {}))
+        allclassdict.update(classdict)
+        meta.__clsdicts__[clsname] = allclassdict
+        cls = type.__new__(meta, clsname, bases, allclassdict)
         if clsname == 'Model':
             return cls
         cls.initialize()
